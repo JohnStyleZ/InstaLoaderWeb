@@ -140,8 +140,8 @@ STATICFILES_DIRS = [_static_dir] if _static_dir.exists() else []
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # Media (be aware: ephemeral on Render)
-MEDIA_URL = "/temp/"
-MEDIA_ROOT = BASE_DIR / "temp"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 # ----------------------------------------------------
 # Default PK
