@@ -124,9 +124,25 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 import os
+from pathlib import Path
 
-MEDIA_URL = "/temp/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "temp")
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-STATIC_URL = "/static/"
-STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
+# --- Security & env ---
+SECRET_KEY = os.environ.get("SECRET_KEY", "dev-insecure-key")  # <-- rotate & set in Render
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
+
+# Allow Render host
+RENDER_HOST = os.environ.get("RENDER_EXTERNAL_HOSTNAME")  # Render sets this automatically
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+if RENDER_HOST:
+    ALLOWED_HOSTS.append(RENDER_HOST)
+# (Optional: also allow any .onrender.com subdomain)
+ALLOWED_HOSTS.append(".onrender.com")
+
+# CSRF (important for forms/cookies)
+CSRF_TRUSTED_ORIGINS = []
+if RENDER_HOST:
+    CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_HOST}")
+CSRF_TRUSTED_ORIGINS.append("https://*.onrender.com")
+
