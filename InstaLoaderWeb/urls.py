@@ -16,14 +16,16 @@ Including another URLconf
 """
 
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
-from django.conf.urls.static import static
+from django.views.static import serve as static_serve
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("", include("downloader.urls")),  # your app routes
+    path("", include("downloader.urls")),
 ]
 
-# Dev/static serving for media (OK on Render while you get S3/Disk set up)
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve MEDIA files even when DEBUG=False (needed on Render)
+urlpatterns += [
+    re_path(r"^media/(?P<path>.*)$", static_serve, {"document_root": settings.MEDIA_ROOT}),
+]
