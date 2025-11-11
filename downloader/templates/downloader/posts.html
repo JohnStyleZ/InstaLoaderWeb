@@ -65,27 +65,29 @@
     <div class="container">
       <div class="media-cards">
         {% for item in images %}
-          <div class="card">
-            <img src="{{ item.preview }}" alt="image" loading="lazy" />
-            <div class="card-actions">
-              <a class="btn" href="{{ item.download }}" download>Download</a>
-            </div>
+        <div class="card">
+          <img class="media" src="{{ item.preview }}" alt="image preview"/>
+          <div class="card-actions">
+            <a class="btn-download" href="{{ item.download }}">Download</a>
           </div>
+        </div>
         {% endfor %}
     
         {% for item in videos %}
-          <div class="card">
-            <video controls playsinline>
-              <source src="{{ item.preview }}" type="video/mp4" />
-            </video>
-            <div class="card-actions">
-              <a class="btn" href="{{ item.download }}" download>Download</a>
-            </div>
+        <div class="card">
+          <video class="media" controls preload="metadata">
+            <source src="{{ item.preview }}" type="video/mp4"/>
+            Your browser does not support the video tag.
+          </video>
+          <div class="card-actions">
+            <a class="btn-download" href="{{ item.download }}">Download</a>
           </div>
+        </div>
         {% endfor %}
       </div>
     </div>
     {% endif %}
+
 
 
     <footer>
