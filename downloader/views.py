@@ -1,11 +1,26 @@
 from pathlib import Path
 from django.conf import settings
 from django.shortcuts import render
-from django.http import HttpResponse, HttpResponseBadRequest
-import instaloader, os, base64, tempfile, requests
-from urllib.parse import urlparse, urlsplit, urlencode
+from django.http import StreamingHttpResponse, HttpResponseBadRequest, HttpResponse
+import instaloader, os, base64, tempfile, requests, mimetypes
+from urllib.parse import urlsplit, urlencode, quote
 
-# ---------- helpers ----------
+# =========================
+# Config / Feature toggles
+# =========================
+# Always show previews via proxy so IG CDN can't block hotlinking.
+PREVIEW_VIA_PROXY = os.environ.get("PREVIEW_VIA_PROXY", "true").lower() == "true"
+
+# Allowlist of CDN hosts we will proxy. Add/remove as needed.
+ALLOWED_CDN_HOSTS = {
+    "scontent.cdninstagram.com",
+    "scontent.xx.fbcdn.net",
+    "instagram.fcdn.net",
+}
+
+# =================
+# Helper functions
+# =================
 
 def _parse_shortcode(url: str) -> str | None:
     """Extract the shortcode from a post/reel/tv URL."""
@@ -44,7 +59,7 @@ def _instaloader_with_env() -> instaloader.Instaloader:
         except Exception as e:
             print(f"[instaloader] session load failed: {e}")
 
-    # Tip: do NOT set custom IG_USER_AGENT / proxies unless required.
+    # Tip: do NOT set a custom IG_USER_AGENT / proxies unless required.
     return L
 
 def _collect_cdn_urls(post: instaloader.Post) -> tuple[list[str], list[str]]:
@@ -59,11 +74,9 @@ def _collect_cdn_urls(post: instaloader.Post) -> tuple[list[str], list[str]]:
         if post.typename == "GraphSidecar":
             for node in post.get_sidecar_nodes():
                 if node.is_video:
-                    # video_url may be None if IG blocked access; requires valid session
                     if node.video_url:
                         vid_urls.append(node.video_url)
                 else:
-                    # display_url is the full-size image URL
                     if node.display_url:
                         img_urls.append(node.display_url)
         else:
@@ -81,7 +94,27 @@ def _collect_cdn_urls(post: instaloader.Post) -> tuple[list[str], list[str]]:
     vid_urls = list(dict.fromkeys(vid_urls))
     return img_urls, vid_urls
 
-# ---------- views ----------
+def _wrap_proxy(urls: list[str], *, download: bool = False) -> list[str]:
+    """Convert CDN URLs to /proxy URLs for same-origin preview/download."""
+    if not urls:
+        return urls
+    base = "/proxy"
+    out = []
+    for u in urls:
+        q = urlencode({"u": u, "download": "1" if download else "0"})
+        out.append(f"{base}?{q}")
+    return out
+
+def _host_allowed(url: str) -> bool:
+    try:
+        host = urlsplit(url).hostname or ""
+        return any(host.endswith(h) for h in ALLOWED_CDN_HOSTS)
+    except Exception:
+        return False
+
+# =========
+#  Views
+# =========
 
 def index(request):
     return render(request, "downloader/index.html")
@@ -89,7 +122,7 @@ def index(request):
 def posts(request):
     """
     POST field name="postURL" with a post/reel URL.
-    Does NOT write to MEDIA_ROOT; renders direct CDN URLs for preview/download.
+    Does NOT write to MEDIA_ROOT; renders proxied URLs for reliable preview.
     """
     images = videos = []
     error = None
@@ -106,10 +139,14 @@ def posts(request):
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             print("FOUND")
 
-            images, videos = _collect_cdn_urls(post)
-            print("CDN URLS:", images, videos)
+            img_cdn, vid_cdn = _collect_cdn_urls(post)
+            print("CDN URLS:", img_cdn, vid_cdn)
 
-            if not images and not videos:
+            # For preview, always proxy (same-origin). "Open" links in the template can still go direct.
+            images = _wrap_proxy(img_cdn) if PREVIEW_VIA_PROXY else img_cdn
+            videos = _wrap_proxy(vid_cdn) if PREVIEW_VIA_PROXY else vid_cdn
+
+            if not (img_cdn or vid_cdn):
                 error = ("Could not obtain media URLs. "
                          "Session may be unauthenticated or rate-limited.")
         except Exception as e:
@@ -140,10 +177,13 @@ def reels(request):
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             print("FOUND")
 
-            images, videos = _collect_cdn_urls(post)
-            print("CDN URLS:", images, videos)
+            img_cdn, vid_cdn = _collect_cdn_urls(post)
+            print("CDN URLS:", img_cdn, vid_cdn)
 
-            if not images and not videos:
+            images = _wrap_proxy(img_cdn) if PREVIEW_VIA_PROXY else img_cdn
+            videos = _wrap_proxy(vid_cdn) if PREVIEW_VIA_PROXY else vid_cdn
+
+            if not (img_cdn or vid_cdn):
                 error = ("Could not obtain media URLs. "
                          "Session may be unauthenticated or rate-limited.")
         except Exception as e:
@@ -155,31 +195,49 @@ def reels(request):
         {"data": bool(images or videos), "images": images, "videos": videos, "error": error},
     )
 
-# ---------- OPTIONAL: server proxy for downloads ----------
-
-ALLOW_PROXY = os.environ.get("ALLOW_PROXY_DOWNLOADS", "false").lower() == "true"
+# ===========================
+# Proxy endpoint (preview & DL)
+# ===========================
 
 def proxy(request):
     """
-    Optional endpoint to stream a remote file through your server, so the browser
-    gets a same-origin download (works around cross-origin 'download' restrictions).
-    Enable by setting ALLOW_PROXY_DOWNLOADS=true env var.
+    Stream a remote Instagram CDN file via same-origin.
+    - Supports HTTP Range (video scrubbing)
+    - Doesn’t force download unless ?download=1
     """
-    if not ALLOW_PROXY:
-        return HttpResponseBadRequest("Proxy disabled")
-
     src = request.GET.get("u")
     if not src:
         return HttpResponseBadRequest("Missing url")
+    if not _host_allowed(src):
+        return HttpResponseBadRequest("Host not allowed")
+
+    # Forward Range for videos
+    headers = {}
+    if "Range" in request.headers:
+        headers["Range"] = request.headers["Range"]
+
     try:
-        r = requests.get(src, stream=True, timeout=20)
-        r.raise_for_status()
+        r = requests.get(src, stream=True, timeout=20, headers=headers)
     except Exception as e:
         return HttpResponseBadRequest(f"Fetch failed: {e}")
 
-    # Try to keep the content-type, and set a download filename from path
-    ctype = r.headers.get("Content-Type", "application/octet-stream")
-    name = os.path.basename(urlsplit(src).path) or "download"
-    resp = HttpResponse(r.iter_content(chunk_size=8192), content_type=ctype)
-    resp["Content-Disposition"] = f'attachment; filename="{name}"'
+    if r.status_code not in (200, 206):
+        return HttpResponse(f"Upstream returned {r.status_code}", status=r.status_code)
+
+    path = urlsplit(src).path
+    filename = os.path.basename(path) or "file"
+    ctype = r.headers.get("Content-Type") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    resp = StreamingHttpResponse(r.iter_content(8192), content_type=ctype, status=r.status_code)
+
+    # Pass through useful headers
+    for h in ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified", "Cache-Control"):
+        if h in r.headers:
+            resp[h] = r.headers[h]
+
+    # Force download only when requested
+    dl = (request.GET.get("download") == "1")
+    if dl:
+        resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+
     return resp
