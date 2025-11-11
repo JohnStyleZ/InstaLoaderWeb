@@ -5,19 +5,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>InstaLoaderWeb</title>
+
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:ital,wght@0,300..900;1,300..900&display=swap"
       rel="stylesheet"
     />
+
+    <!-- Styles -->
     <link rel="stylesheet" href="{% static 'downloader/styles.css' %}" />
+
+    <!-- Favicon + Apple Touch Icon -->
+    <link rel="icon" type="image/png" href="{% static 'favicon.png' %}" />
+    <link rel="apple-touch-icon" href="{% static 'favicon.png' %}" />
+    <meta name="theme-color" content="#0b0d10" />
+    <link rel="manifest" href="{% static 'manifest.json' %}" />
+
+    <!-- Fallback CDN Icon (for browsers that ignore static) -->
     <link
-      rel="icon"
-      type="image/x-icon"
+      rel="alternate icon"
+      type="image/png"
       href="https://cdn-icons-png.flaticon.com/512/4208/4208397.png"
     />
   </head>
+
   <body>
     <header>
       <div class="header-content">
