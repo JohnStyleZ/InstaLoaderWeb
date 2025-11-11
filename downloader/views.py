@@ -1,13 +1,13 @@
 from django.shortcuts import render
 from django.http import StreamingHttpResponse, HttpResponseBadRequest, HttpResponse
-import os, base64, tempfile, requests, mimetypes
+import os, base64, tempfile, requests, mimetypes, re
 import instaloader
 from urllib.parse import urlsplit, urlencode
 
 # =========================
 # Config / Feature toggles
 # =========================
-# We always render previews via our /proxy to avoid IG CDN hotlink issues.
+# We render previews via /proxy to avoid IG CDN hotlink issues.
 PREVIEW_VIA_PROXY = os.environ.get("PREVIEW_VIA_PROXY", "true").lower() == "true"
 
 # Allow common Instagram/Facebook regional CDN hosts.
@@ -21,34 +21,53 @@ ALLOWED_CDN_SUBSTRINGS = (
 # Helper functions
 # =================
 
-def _parse_shortcode(url: str) -> str | None:
+def _sanitize_url(url: str) -> str:
+    """Trim & strip query/fragment noise from an Instagram URL."""
+    if not url:
+        return ""
+    url = url.strip()
+    if "instagram.com" not in url:
+        return ""
+    parts = urlsplit(url)
+    # remove ?query and #fragment
+    clean = f"{parts.scheme}://{parts.netloc}{parts.path}"
+    return clean.rstrip("/")
+
+def _parse_ig_url(url: str):
     """
-    Extract a clean shortcode from an Instagram post/reel/tv URL.
-    Handles URLs like:
-      - https://www.instagram.com/p/ABCDEFG123/
-      - https://www.instagram.com/reel/ABCDEFG123/?igsh=xxxx
-      - https://www.instagram.com/tv/ABCDEFG123/?utm_source=...
+    Returns (kind, token)
+      kind ∈ {"post","story"}
+      token:
+        - for post: shortcode (e.g., DQ192xEEdMf)
+        - for story: numeric media id (e.g., 3762806023376780800)
+
+    Supported paths:
+      /p/<shortcode>
+      /reel/<shortcode>
+      /tv/<shortcode>
+      /stories/<username>/<mediaid>
+      /stories/highlights/<mediaid>/...
     """
     if not url:
-        return None
+        return (None, None)
+    path = urlsplit(url).path.rstrip("/")
 
-    url = url.strip()
+    # stories/<username>/<mediaid>
+    m = re.match(r"^/stories/[^/]+/(\d+)$", path)
+    if m:
+        return ("story", m.group(1))
 
-    # Ensure it's an Instagram URL
-    if "instagram.com" not in url:
-        return None
+    # stories/highlights/<mediaid>/...
+    m = re.match(r"^/stories/highlights/(\d+)(?:/.*)?$", path)
+    if m:
+        return ("story", m.group(1))
 
-    # Remove query params and fragments (#)
-    clean = url.split("?", 1)[0].split("#", 1)[0]
+    # post / reel / tv
+    m = re.match(r"^/(p|reel|tv)/([^/]+)$", path)
+    if m:
+        return ("post", m.group(2))
 
-    # Split path and extract shortcode
-    parts = clean.rstrip("/").split("/")
-    if len(parts) >= 2:
-        shortcode = parts[-1]
-        return shortcode or None
-
-    return None
-
+    return (None, None)
 
 def _instaloader_with_env() -> instaloader.Instaloader:
     """Configure Instaloader and load session from IG_SESSION_B64 if provided."""
@@ -58,15 +77,13 @@ def _instaloader_with_env() -> instaloader.Instaloader:
         compress_json=False,
         max_connection_attempts=1,
     )
-
     user = os.environ.get("IG_USER")
     session_b64 = os.environ.get("IG_SESSION_B64")
 
     if session_b64:
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp.write(base64.b64decode(session_b64))
-        tmp.flush()
-        tmp.close()
+        tmp.flush(); tmp.close()
         try:
             L.load_session_from_file(user, tmp.name)
             print("Instaloader version:", instaloader.__version__)
@@ -74,41 +91,46 @@ def _instaloader_with_env() -> instaloader.Instaloader:
             print(f"[instaloader] loaded session for {user} (decoded from base64)")
         except Exception as e:
             print(f"[instaloader] session load failed: {e}")
-
     return L
 
-def _collect_cdn_urls(post: instaloader.Post) -> tuple[list[str], list[str]]:
-    """Return (images, videos) as direct CDN URLs (no server download)."""
-    img_urls: list[str] = []
-    vid_urls: list[str] = []
-
+def _collect_post_cdn_urls(post: instaloader.Post):
+    """Return (images, videos) CDN URLs for posts/reels/TV (incl. sidecar)."""
+    imgs, vids = [], []
     try:
         if post.typename == "GraphSidecar":
             for node in post.get_sidecar_nodes():
-                if node.is_video:
-                    if node.video_url:
-                        vid_urls.append(node.video_url)
-                else:
-                    if node.display_url:
-                        img_urls.append(node.display_url)
+                if node.is_video and node.video_url:
+                    vids.append(node.video_url)
+                elif not node.is_video and node.display_url:
+                    imgs.append(node.display_url)
         else:
-            if post.is_video:
-                if post.video_url:
-                    vid_urls.append(post.video_url)
-            else:
-                if post.url:
-                    img_urls.append(post.url)
+            if post.is_video and getattr(post, "video_url", None):
+                vids.append(post.video_url)
+            elif getattr(post, "url", None):
+                imgs.append(post.url)
     except Exception as e:
-        print(f"[collect_cdn_urls] error: {e}")
-
+        print(f"[collect_post_cdn_urls] error: {e}")
     # de-dup
-    img_urls = list(dict.fromkeys(img_urls))
-    vid_urls = list(dict.fromkeys(vid_urls))
-    return img_urls, vid_urls
+    imgs = list(dict.fromkeys(imgs))
+    vids = list(dict.fromkeys(vids))
+    return imgs, vids
+
+def _collect_story_cdn_urls(L: instaloader.Instaloader, media_id: str):
+    """Return (images, videos) CDN URLs for a single story media id."""
+    imgs, vids = [], []
+    try:
+        item = instaloader.StoryItem.from_mediaid(L.context, int(media_id))
+        if getattr(item, "video_url", None):
+            vids.append(item.video_url)
+        elif getattr(item, "url", None):
+            imgs.append(item.url)
+    except Exception as e:
+        print(f"[collect_story_cdn_urls] error: {e}")
+    return imgs, vids
 
 def _make_media_pairs(urls: list[str]) -> list[dict]:
     """
-    Build list:
+    Build list of dicts for template:
       [{"preview": "/proxy?...download=0", "download": "/proxy?...download=1"}, ...]
     """
     items: list[dict] = []
@@ -134,26 +156,33 @@ def index(request):
 
 def posts(request):
     """
-    POST field name="postURL" with a post/reel URL.
-    No media is stored on server; we render proxied preview + single Download button.
+    One box handles:
+      - Post/Reel/TV URLs
+      - Stories & Highlights URLs
+    Renders proxied preview + single Download button.
     """
     images = []
     videos = []
     error = None
 
     if request.method == "POST":
-        url = (request.POST.get("postURL") or "").strip()
-        shortcode = _parse_shortcode(url)
-        if not shortcode:
-            return render(request, "downloader/posts.html", {"error": "Invalid URL."})
+        raw = (request.POST.get("postURL") or "").strip()
+        cleaned = _sanitize_url(raw)
+        kind, token = _parse_ig_url(cleaned)
+
+        if not kind or not token:
+            return render(request, "downloader/posts.html", {"error": "Invalid or unsupported Instagram URL."})
 
         try:
-            print("FINDING POST")
+            print("FINDING MEDIA")
             L = _instaloader_with_env()
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-            print("FOUND")
 
-            img_cdn, vid_cdn = _collect_cdn_urls(post)
+            if kind == "post":
+                post = instaloader.Post.from_shortcode(L.context, token)
+                img_cdn, vid_cdn = _collect_post_cdn_urls(post)
+            else:
+                img_cdn, vid_cdn = _collect_story_cdn_urls(L, token)
+
             print("CDN URLS:", img_cdn, vid_cdn)
 
             images = _make_media_pairs(img_cdn)
@@ -171,26 +200,29 @@ def posts(request):
     )
 
 def reels(request):
-    """Same as posts(), but renders reels.html."""
+    """Keeps a separate page if you still link to /reels; same handling as /posts."""
     images = []
     videos = []
     error = None
 
     if request.method == "POST":
-        url = (request.POST.get("postURL") or "").strip()
-        shortcode = _parse_shortcode(url)
-        if not shortcode:
-            return render(request, "downloader/reels.html", {"error": "Invalid URL."})
+        raw = (request.POST.get("postURL") or "").strip()
+        cleaned = _sanitize_url(raw)
+        kind, token = _parse_ig_url(cleaned)
+
+        if not kind or not token:
+            return render(request, "downloader/reels.html", {"error": "Invalid or unsupported Instagram URL."})
 
         try:
-            print("FINDING POST")
+            print("FINDING MEDIA")
             L = _instaloader_with_env()
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-            print("FOUND")
+            if kind == "post":
+                post = instaloader.Post.from_shortcode(L.context, token)
+                img_cdn, vid_cdn = _collect_post_cdn_urls(post)
+            else:
+                img_cdn, vid_cdn = _collect_story_cdn_urls(L, token)
 
-            img_cdn, vid_cdn = _collect_cdn_urls(post)
             print("CDN URLS:", img_cdn, vid_cdn)
-
             images = _make_media_pairs(img_cdn)
             videos = _make_media_pairs(vid_cdn)
 
@@ -221,7 +253,6 @@ def proxy(request):
     if not _host_allowed(src):
         return HttpResponseBadRequest("Host not allowed")
 
-    # Pass through Range header for video scrubbing
     headers = {}
     if "Range" in request.headers:
         headers["Range"] = request.headers["Range"]
@@ -240,12 +271,12 @@ def proxy(request):
 
     resp = StreamingHttpResponse(r.iter_content(8192), content_type=ctype, status=r.status_code)
 
-    # forward useful headers
+    # Forward useful headers
     for h in ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified", "Cache-Control"):
         if h in r.headers:
             resp[h] = r.headers[h]
 
-    # force attachment only when requested
+    # Force attachment only when requested
     if request.GET.get("download") == "1":
         resp["Content-Disposition"] = f'attachment; filename="{filename}"'
 
