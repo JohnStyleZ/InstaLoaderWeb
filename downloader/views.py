@@ -2,7 +2,7 @@ from pathlib import Path
 from django.conf import settings
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponseBadRequest
-import instaloader, os, shutil, threading, time
+import instaloader, os, shutil, threading, time, base64, tempfile
 
 # ---------- helpers ----------
 
@@ -20,35 +20,39 @@ def _parse_shortcode(url: str) -> str | None:
     return None
 
 def _instaloader_with_env(media_root: Path) -> instaloader.Instaloader:
-    """Configure Instaloader to write into MEDIA_ROOT and (optionally) load a session and proxy."""
     L = instaloader.Instaloader(
         download_comments=False,
         save_metadata=False,
         compress_json=False,
         max_connection_attempts=1,
-        dirname_pattern=str(media_root)  # write directly into MEDIA_ROOT
+        dirname_pattern=str(media_root)
     )
 
-    # Optional but strongly recommended: use a logged-in session to avoid 403
     user = os.environ.get("IG_USER")
-    session_path = os.environ.get("IG_SESSION_PATH")
+    session_b64 = os.environ.get("IG_SESSION_B64")
+    session_path = None  # prefer B64
+
+    if session_b64:
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp.write(base64.b64decode(session_b64))
+        tmp.flush(); tmp.close()
+        session_path = tmp.name
+
     if user and session_path and Path(session_path).exists():
         try:
             L.load_session_from_file(user, session_path)
-            print(f"[instaloader] loaded session for {user} from {session_path}")
+            print(f"[instaloader] loaded session for {user} (decoded from base64)")
         except Exception as e:
             print(f"[instaloader] session load failed: {e}")
 
-    # Optional: user-agent + proxy
+    # Optional UA / proxies
     ua = os.environ.get("IG_USER_AGENT")
     if ua:
         L.context.user_agent = ua
-
-    http_proxy  = os.environ.get("HTTP_PROXY", "")
+    http_proxy = os.environ.get("HTTP_PROXY", "")
     https_proxy = os.environ.get("HTTPS_PROXY", "")
     if http_proxy or https_proxy:
         L.context._session.proxies.update({"http": http_proxy, "https": https_proxy})
-        print("[instaloader] proxies set")
 
     return L
 
