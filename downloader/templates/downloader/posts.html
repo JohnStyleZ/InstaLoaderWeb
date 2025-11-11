@@ -60,45 +60,29 @@
     {% if data %}
     <div class="container">
       <div class="media-cards">
-        {# IMAGES #}
-        {% for image in images %}
-        <div class="card">
-          <img
-            src="{{ image }}"
-            alt="Image"
-            loading="lazy"
-            referrerpolicy="no-referrer"
-            onerror="if(!this.dataset.fallback){this.dataset.fallback=1;this.src='{% url 'proxy' %}?u='+encodeURIComponent('{{ image }}');}"
-          />
-          <div class="card-actions">
-            <a href="{{ image }}" target="_blank" rel="noopener">Open</a>
-            <!-- Same-origin download via proxy (works around cross-origin download limits) -->
-            <a href="{% url 'proxy' %}?u={{ image|urlencode }}">Download</a>
+        {% for item in images %}
+          <div class="card">
+            <img src="{{ item.preview }}" alt="image" loading="lazy" />
+            <div class="card-actions">
+              <a class="btn" href="{{ item.download }}" download>Download</a>
+            </div>
           </div>
-        </div>
         {% endfor %}
-
-        {# VIDEOS #}
-        {% for video in videos %}
-        <div class="card">
-          <video
-            controls
-            playsinline
-            referrerpolicy="no-referrer"
-            onerror="if(!this.dataset.fallback){this.dataset.fallback=1; const u='{% url 'proxy' %}?u='+encodeURIComponent('{{ video }}'); this.innerHTML='<source src=\"'+u+'\" type=\"video/mp4\">'; this.load(); }"
-          >
-            <source src="{{ video }}" type="video/mp4" />
-            Your browser does not support the video tag.
-          </video>
-          <div class="card-actions">
-            <a href="{{ video }}" target="_blank" rel="noopener">Open</a>
-            <a href="{% url 'proxy' %}?u={{ video|urlencode }}">Download</a>
+    
+        {% for item in videos %}
+          <div class="card">
+            <video controls playsinline>
+              <source src="{{ item.preview }}" type="video/mp4" />
+            </video>
+            <div class="card-actions">
+              <a class="btn" href="{{ item.download }}" download>Download</a>
+            </div>
           </div>
-        </div>
         {% endfor %}
       </div>
     </div>
     {% endif %}
+
 
     <footer>
       Made with &#10084;&#65039; • InstaLoaderWeb &copy;
