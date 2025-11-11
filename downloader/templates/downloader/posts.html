@@ -1,81 +1,99 @@
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>InstaLoaderWeb – Posts</title>
-  <link rel="stylesheet" href="{% static 'downloader/styles.css' %}"/>
-  <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/717/717392.png"/>
-</head>
-<body>
-  <header class="site-header">
-    <div class="header-inner">
-      <img src="https://cdn-icons-png.flaticon.com/512/717/717392.png" class="logo" alt="logo"/>
-      <h1>InstaLoaderWeb</h1>
-    </div>
-  </header>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>InstaLoaderWeb</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:ital,wght@0,300..900;1,300..900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{% static 'downloader/styles.css' %}" />
+    <link
+      rel="icon"
+      type="image/x-icon"
+      href="https://cdn-icons-png.flaticon.com/512/4208/4208397.png"
+    />
+    <style>
+      /* Optional: make sure previews are visible */
+      .media-cards { display: grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap: 16px; }
+      .card { background: #1113; border-radius: 12px; padding: 10px; }
+      .card img, .card video { width: 100%; height: auto; border-radius: 8px; display: block; }
+      .card-actions { margin-top: 8px; display: flex; gap: 10px; }
+      .card-actions a { text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-content">
+        <img
+          src="https://cdn-icons-png.flaticon.com/512/717/717392.png"
+          class="logo"
+          alt="logo"
+        />
+        <span>InstaLoaderWeb</span>
+      </div>
+    </header>
 
-  <main class="page">
-    <section class="panel">
-      <form action="{% url 'posts' %}" method="POST" class="url-form">
+    <section class="user-input">
+      <form action="{% url 'posts' %}" method="POST">
         {% csrf_token %}
-        <label for="postURL" class="label">Instagram Post / Reel URL</label>
-        <div class="input-row">
-          <input type="url" name="postURL" id="postURL" class="input"
-                 placeholder="https://www.instagram.com/p/XXXXX/"/>
-          <button type="submit" id="download" class="btn btn-primary">
-            Get Media
-          </button>
-        </div>
+        <label for="postURL">Enter Instagram Post URL</label>
+        <input
+          type="text"
+          name="postURL"
+          id="postURL"
+          placeholder="https://www.instagram.com/"
+          value="{{ request.POST.postURL|default:'' }}"
+        />
+        <button type="submit" id="download">Download</button>
+        <span class="loader" style="display: none"></span>
         {% if error %}
-          <p class="msg msg-error">{{ error }}</p>
+          <h3 style="color:#d33;margin-top:.75rem">{{ error }}</h3>
         {% endif %}
       </form>
     </section>
 
     {% if data %}
-    <section class="gallery">
-      <div class="media-grid">
+    <div class="container">
+      <div class="media-cards">
         {% for item in images %}
-          <article class="card">
-            <div class="media-wrap">
-              <img src="{{ item.preview }}" alt="Instagram image" loading="lazy" class="media"/>
-            </div>
+          <div class="card">
+            <img src="{{ item.preview }}" alt="image" loading="lazy" />
             <div class="card-actions">
-              <a href="{{ item.download }}" class="btn btn-download" download>Download</a>
+              <a class="btn" href="{{ item.download }}" download>Download</a>
             </div>
-          </article>
+          </div>
         {% endfor %}
-
+    
         {% for item in videos %}
-          <article class="card">
-            <div class="media-wrap">
-              <video class="media" controls playsinline>
-                <source src="{{ item.preview }}" type="video/mp4"/>
-              </video>
-            </div>
+          <div class="card">
+            <video controls playsinline>
+              <source src="{{ item.preview }}" type="video/mp4" />
+            </video>
             <div class="card-actions">
-              <a href="{{ item.download }}" class="btn btn-download" download>Download</a>
+              <a class="btn" href="{{ item.download }}" download>Download</a>
             </div>
-          </article>
+          </div>
         {% endfor %}
       </div>
-    </section>
+    </div>
     {% endif %}
-  </main>
 
-  <footer class="site-footer">
-    <p>Made with ❤️ • InstaLoaderWeb</p>
-  </footer>
 
-  <script>
-    document.getElementById("download")?.addEventListener("click", function () {
-      const btn = this;
-      btn.disabled = true;
-      btn.classList.add("loading");
-      setTimeout(()=>{ btn.disabled = false; btn.classList.remove("loading"); }, 6000);
-    });
-  </script>
-</body>
+    <footer>
+      Made with &#10084;&#65039; • InstaLoaderWeb &copy;
+      <span><a href="https://github.com/AzeemIdrisi">John Wu</a></span>
+      {{ year }}
+    </footer>
+
+    <script>
+      document.getElementById("download")?.addEventListener("click", function () {
+        document.querySelector(".loader").style.display = "block";
+      });
+    </script>
+  </body>
 </html>
