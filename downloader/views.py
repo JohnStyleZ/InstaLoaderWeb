@@ -22,17 +22,33 @@ ALLOWED_CDN_SUBSTRINGS = (
 # =================
 
 def _parse_shortcode(url: str) -> str | None:
-    """Extract the shortcode from a post/reel/tv URL."""
+    """
+    Extract a clean shortcode from an Instagram post/reel/tv URL.
+    Handles URLs like:
+      - https://www.instagram.com/p/ABCDEFG123/
+      - https://www.instagram.com/reel/ABCDEFG123/?igsh=xxxx
+      - https://www.instagram.com/tv/ABCDEFG123/?utm_source=...
+    """
     if not url:
         return None
+
     url = url.strip()
-    if not url.startswith("https://www.instagram.com/"):
+
+    # Ensure it's an Instagram URL
+    if "instagram.com" not in url:
         return None
-    parts = url.rstrip("/").split("/")
-    # Handle .../<type>/<shortcode>
+
+    # Remove query params and fragments (#)
+    clean = url.split("?", 1)[0].split("#", 1)[0]
+
+    # Split path and extract shortcode
+    parts = clean.rstrip("/").split("/")
     if len(parts) >= 2:
-        return parts[-1]
+        shortcode = parts[-1]
+        return shortcode or None
+
     return None
+
 
 def _instaloader_with_env() -> instaloader.Instaloader:
     """Configure Instaloader and load session from IG_SESSION_B64 if provided."""
