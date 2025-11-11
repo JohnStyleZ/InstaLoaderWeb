@@ -3,7 +3,7 @@ from django.conf import settings
 from django.shortcuts import render
 from django.http import StreamingHttpResponse, HttpResponseBadRequest, HttpResponse
 import instaloader, os, base64, tempfile, requests, mimetypes
-from urllib.parse import urlsplit, urlencode, quote
+from urllib.parse import urlsplit, urlencode
 
 # =========================
 # Config / Feature toggles
@@ -11,12 +11,14 @@ from urllib.parse import urlsplit, urlencode, quote
 # Always show previews via proxy so IG CDN can't block hotlinking.
 PREVIEW_VIA_PROXY = os.environ.get("PREVIEW_VIA_PROXY", "true").lower() == "true"
 
-# Allowlist of CDN hosts we will proxy. Add/remove as needed.
-ALLOWED_CDN_HOSTS = {
-    "scontent.cdninstagram.com",
-    "scontent.xx.fbcdn.net",
-    "instagram.fcdn.net",
-}
+# Allow any Instagram/Facebook CDN edge host (regionalized).
+# We match by substring so hosts like instagram.fhnl2-1.fna.fbcdn.net are allowed.
+ALLOWED_CDN_SUBSTRINGS = (
+    ".cdninstagram.com",
+    ".fbcdn.net",
+    ".fna.fbcdn.net",
+    ".fna.fbcdn.net",  # harmless duplicates ok
+)
 
 # =================
 # Helper functions
@@ -95,20 +97,22 @@ def _collect_cdn_urls(post: instaloader.Post) -> tuple[list[str], list[str]]:
     return img_urls, vid_urls
 
 def _wrap_proxy(urls: list[str], *, download: bool = False) -> list[str]:
-    """Convert CDN URLs to /proxy URLs for same-origin preview/download."""
-    if not urls:
-        return urls
-    base = "/proxy"
+    """Convert CDN URLs to /proxy URLs for same-origin preview/download. Skip if already proxied."""
     out = []
-    for u in urls:
-        q = urlencode({"u": u, "download": "1" if download else "0"})
-        out.append(f"{base}?{q}")
+    for u in urls or []:
+        if not u:
+            continue
+        if u.startswith("/proxy?"):
+            out.append(u)  # already proxied
+        else:
+            q = urlencode({"u": u, "download": "1" if download else "0"})
+            out.append(f"/proxy?{q}")
     return out
 
 def _host_allowed(url: str) -> bool:
     try:
-        host = urlsplit(url).hostname or ""
-        return any(host.endswith(h) for h in ALLOWED_CDN_HOSTS)
+        host = (urlsplit(url).hostname or "").lower()
+        return any(sub in host for sub in ALLOWED_CDN_SUBSTRINGS)
     except Exception:
         return False
 
@@ -142,7 +146,7 @@ def posts(request):
             img_cdn, vid_cdn = _collect_cdn_urls(post)
             print("CDN URLS:", img_cdn, vid_cdn)
 
-            # For preview, always proxy (same-origin). "Open" links in the template can still go direct.
+            # For preview, always proxy (same-origin).
             images = _wrap_proxy(img_cdn) if PREVIEW_VIA_PROXY else img_cdn
             videos = _wrap_proxy(vid_cdn) if PREVIEW_VIA_PROXY else vid_cdn
 
@@ -236,8 +240,7 @@ def proxy(request):
             resp[h] = r.headers[h]
 
     # Force download only when requested
-    dl = (request.GET.get("download") == "1")
-    if dl:
+    if request.GET.get("download") == "1":
         resp["Content-Disposition"] = f'attachment; filename="{filename}"'
 
     return resp
