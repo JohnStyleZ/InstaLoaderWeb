@@ -17,6 +17,14 @@
       type="image/x-icon"
       href="https://cdn-icons-png.flaticon.com/512/4208/4208397.png"
     />
+    <style>
+      /* Optional: make sure previews are visible */
+      .media-cards { display: grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap: 16px; }
+      .card { background: #1113; border-radius: 12px; padding: 10px; }
+      .card img, .card video { width: 100%; height: auto; border-radius: 8px; display: block; }
+      .card-actions { margin-top: 8px; display: flex; gap: 10px; }
+      .card-actions a { text-decoration: none; }
+    </style>
   </head>
   <body>
     <header>
@@ -55,9 +63,17 @@
         {# IMAGES #}
         {% for image in images %}
         <div class="card">
-          <img src="{{ image }}" alt="Downloaded image" />
+          <img
+            src="{{ image }}"
+            alt="Image"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            onerror="if(!this.dataset.fallback){this.dataset.fallback=1;this.src='{% url 'proxy' %}?u='+encodeURIComponent('{{ image }}');}"
+          />
           <div class="card-actions">
-            <a href="{{ image }}" download>Download</a>
+            <a href="{{ image }}" target="_blank" rel="noopener">Open</a>
+            <!-- Same-origin download via proxy (works around cross-origin download limits) -->
+            <a href="{% url 'proxy' %}?u={{ image|urlencode }}">Download</a>
           </div>
         </div>
         {% endfor %}
@@ -65,12 +81,18 @@
         {# VIDEOS #}
         {% for video in videos %}
         <div class="card">
-          <video controls playsinline>
+          <video
+            controls
+            playsinline
+            referrerpolicy="no-referrer"
+            onerror="if(!this.dataset.fallback){this.dataset.fallback=1; const u='{% url 'proxy' %}?u='+encodeURIComponent('{{ video }}'); this.innerHTML='<source src=\"'+u+'\" type=\"video/mp4\">'; this.load(); }"
+          >
             <source src="{{ video }}" type="video/mp4" />
             Your browser does not support the video tag.
           </video>
           <div class="card-actions">
-            <a href="{{ video }}" download>Download</a>
+            <a href="{{ video }}" target="_blank" rel="noopener">Open</a>
+            <a href="{% url 'proxy' %}?u={{ video|urlencode }}">Download</a>
           </div>
         </div>
         {% endfor %}
@@ -80,12 +102,12 @@
 
     <footer>
       Made with &#10084;&#65039; • InstaLoaderWeb &copy;
-      <span><a href="https://github.com/JohnStyleZ">John Wu</a></span>
+      <span><a href="https://github.com/AzeemIdrisi">John Wu</a></span>
       {{ year }}
     </footer>
 
     <script>
-      document.getElementById("download").addEventListener("click", function () {
+      document.getElementById("download")?.addEventListener("click", function () {
         document.querySelector(".loader").style.display = "block";
       });
     </script>
