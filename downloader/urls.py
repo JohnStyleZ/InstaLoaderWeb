@@ -5,5 +5,5 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("posts", views.posts, name="posts"),
     path("reels", views.reels, name="reels"),
-    path("allposts", views.allposts, name="allposts"),
+    path("proxy", views.proxy, name="proxy"),  # keep if you added the proxy view
 ]
