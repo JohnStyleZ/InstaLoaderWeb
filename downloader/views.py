@@ -41,6 +41,8 @@ def _instaloader_with_env(media_root: Path) -> instaloader.Instaloader:
     if user and session_path and Path(session_path).exists():
         try:
             L.load_session_from_file(user, session_path)
+            print("Instaloader version:", instaloader.__version__)
+            print("[instaloader] test_login:", L.test_login())
             who = L.test_login()
             print("[instaloader] test_login:", who)
             print(f"[instaloader] loaded session for {user} (decoded from base64)")
